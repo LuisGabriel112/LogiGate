@@ -14,7 +14,6 @@ LogiGate AI es una plataforma integral diseñada para optimizar la operación de
 * **📸 Evidence Engine:** Captura automatizada de estado físico para blindaje jurídico ante daños.
 * **📊 Smart Queue (IA Predictiva):** Algoritmos que predicen la saturación de puertas basándose en tendencias históricas.
 * **🗺️ Interactive Patio Map:** Visualización en tiempo real de la ocupación y ubicación de unidades.
-* **📶 Offline-First:** Diseñado para funcionar en condiciones de red inestables (PWA).
 
 ---
 
@@ -26,8 +25,6 @@ LogiGate AI es una plataforma integral diseñada para optimizar la operación de
 | **Frontend** | [SvelteKit](https://kit.svelte.dev/) + Tailwind CSS |
 | **IA & Visión** | YOLOv11 & PaddleOCR |
 | **Base de Datos** | PostgreSQL + TimescaleDB |
-| **Mensajería** | Redis & MQTT |
-
 ---
 
 ## 🏗️ Arquitectura del Sistema
@@ -47,8 +44,3 @@ El sistema utiliza una arquitectura asíncrona para procesar flujos de video e i
 * Python 3.11+
 * Node.js 18+
 * Docker & Docker Compose
-
-### Pasos
-1. **Clonar el repositorio:**
-   ```bash
-   git clone [https://github.com/tu-usuario/logigate-ai.git](https://github.com/tu-usuario/logigate-ai.git)
