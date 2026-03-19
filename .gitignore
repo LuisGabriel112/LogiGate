@@ -1,1 +1,8 @@
 venv/
+runs/
+__pycache__/
+*.pyc
+.env
+logigate-backend/Placasdetect-1/
+logigate-backend/yolo11n.pt
+logigate-backend/yolo11s.pt
