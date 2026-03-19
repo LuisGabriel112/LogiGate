@@ -1,0 +1,13 @@
+train: C:\Users\USER\Desktop\LOGIGATE\LogiGate\logigate-backend\Placasdetect-1\train\images
+val: C:\Users\USER\Desktop\LOGIGATE\LogiGate\logigate-backend\Placasdetect-1\valid\images
+test: C:\Users\USER\Desktop\LOGIGATE\LogiGate\logigate-backend\Placasdetect-1\test\images
+
+nc: 3
+names: ['estado_mexico_placas', 'placas', 'placas_mexico_estado']
+
+roboflow:
+  workspace: joshua-obr6u
+  project: placasdetect
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/joshua-obr6u/placasdetect/dataset/1
