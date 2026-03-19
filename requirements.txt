@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+ultralytics
+paddlepaddle
+paddleocr
+opencv-python
+python-multipart
+inference
+supervision
+# Base de datos veni
+sqlalchemy==2.0.27
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
