@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# Base de datos
+*.db
+
+# Certificados SSL
+cert.pem
+key.pem
+
+# Modelos IA (archivos grandes)
+*.pt
+*.onnx
+.paddlex/
+
+# Node / SvelteKit
+node_modules/
+.svelte-kit/
+build/
+dist/
+
+# Sistema
+.DS_Store
+Thumbs.db
+.claude/
+runs/
