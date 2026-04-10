@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { Scan, CheckCircle, XCircle, RotateCcw, Upload, ImagePlus } from 'lucide-svelte';
 
-    const API = 'http://localhost:8000';
+    const API = 'http://192.168.100.64:8000';
 
     let videoSource;
     let canvasElement;

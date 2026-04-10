@@ -10,7 +10,7 @@ import numpy as np
 import cv2
 import os
 import easyocr
-from ultralytics import YOLO
+from roboflow import Roboflow
 import shutil
 from datetime import datetime
 
@@ -29,13 +29,15 @@ models = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Cargando modelo YOLO y OCR...")
+    print("Conectando con Roboflow Cloud...")
     try:
-        # Cargamos el modelo (asegurate que el archivo .pt esté en la carpeta)
-        models["yolo"] = YOLO("yolo11n.pt") 
+        # Configuración de Roboflow Hosted
+        rf = Roboflow(api_key="nFwszjsA0FpvEr9GMKqD")
+        project = rf.workspace().project("placas-bpbge-yoebh")
+        models["yolo"] = project.version(1).model
+        print("Conexión con Roboflow exitosa.")
     except Exception as e:
-        print(f"Error cargando YOLO: {e}")
-        models["yolo"] = YOLO("yolo11n.pt")
+        print(f"Error conectando a Roboflow: {e}")
         
     models["reader"] = easyocr.Reader(['es']) 
     yield
@@ -56,13 +58,12 @@ app.add_middleware(
 
 @app.get("/")
 def read_root():
-    return {"Hello": "LogiGate API", "IA_Status": "Ready" if "yolo" in models else "Off"}
+    return {"Hello": "LogiGate API", "IA_Status": "Connected to Roboflow" if "yolo" in models else "Disconnected"}
 
 # --- HISTORIAL ---
 @app.get("/api/v1/history")
 async def get_history(db: Session = Depends(get_db)):
     try:
-        # Query ajustada a tus nombres reales de columnas en pgAdmin
         query = text("""
             SELECT 
                 ra."Id_Acceso", 
@@ -87,7 +88,7 @@ async def get_history(db: Session = Depends(get_db)):
                 "id_acceso": row[0],
                 "placa": row[1],
                 "fecha": row[2].strftime("%Y-%m-%d %H:%M:%S") if row[2] else None,
-                "foto_url": f"http://localhost:8000/static/plates/{row[3]}" if row[3] else None,
+                "foto_url": f"http://{row[3]}" if row[3] and row[3].startswith("http") else (f"http://192.168.100.64:8000/static/plates/{row[3]}" if row[3] else None),
                 "marca": row[4] or "Desconocido",
                 "modelo": row[5] or "Desconocido",
                 "propietario": f"{row[6]} {row[7]}" if row[6] else "Visitante/Nuevo"
@@ -109,64 +110,96 @@ async def create_scan(image: UploadFile = File(...), db: Session = Depends(get_d
         with open(filepath, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
 
-        # 2. Procesar con IA
+        # 2. Procesar con Roboflow Hosted Inference
         img = cv2.imread(filepath)
-        results = models["yolo"](img, conf=0.20)[0]
+        
+        # Enviar imagen a Roboflow
+        prediction = models["yolo"].predict(filepath, confidence=30, overlap=30).json()
+        
+        # LOG DE DEPURACIÓN
+        print(f"DEBUG: Predicciones de Roboflow: {prediction}")
+        
         detected_plate = "NO_DETECTADA"
         max_conf = 0.0
 
-        for box in results.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
+        if "predictions" in prediction and len(prediction["predictions"]) > 0:
+            best_pred = None
+            for p in prediction["predictions"]:
+                class_name = p.get("class", "").lower()
+                if "placa" in class_name or "plate" in class_name or "license" in class_name:
+                    best_pred = p
+                    break
+            
+            if not best_pred:
+                best_pred = prediction["predictions"][0]
+            
+            x_center, y_center = best_pred["x"], best_pred["y"]
+            width, height = best_pred["width"], best_pred["height"]
+            
+            x1 = int(x_center - (width / 2))
+            y1 = int(y_center - (height / 2))
+            x2 = int(x_center + (width / 2))
+            y2 = int(y_center + (height / 2))
+            
+            h_img, w_img, _ = img.shape
+            x1, y1 = max(0, x1-20), max(0, y1-20)
+            x2, y2 = min(w_img, x2+20), min(h_img, y2+20)
+            
             crop = img[y1:y2, x1:x2]
             
-            ocr_result = models["reader"].readtext(crop)
+            # --- PROCESAMIENTO OCR ---
+            crop = cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_LANCZOS4)
+            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            clahe = cv2.createCLAHE(clipLimit=1.2, tileGridSize=(8,8))
+            gray = clahe.apply(gray)
+            
+            ocr_result = models["reader"].readtext(
+                gray, 
+                detail=1, 
+                allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+            )
+            
             if ocr_result:
-                # Limpieza de placa: Mayúsculas y sin espacios
-                detected_plate = ocr_result[0][1].upper().replace(" ", "").strip()
-                max_conf = float(box.conf[0])
-                break
+                ocr_result.sort(key=lambda x: x[0][0][0])
+                max_h = max([res[0][2][1] - res[0][0][1] for res in ocr_result])
+                valid_parts = [res[1].upper() for res in ocr_result if (res[0][2][1] - res[0][0][1]) > (max_h * 0.4)]
+                
+                full_raw = "".join(valid_parts)
+                detected_plate = full_raw if len(full_raw) >= 3 else "NO_DETECTADA"
+                max_conf = best_pred["confidence"]
 
         # --- LÓGICA DE BASE DE DATOS ---
         status = ""
-        
-        # A. Verificar si la placa existe en la tabla Vehiculos
-        check_vehiculo = db.execute(
-            text('SELECT 1 FROM public."Vehiculos" WHERE "Vehiculo_Placa" = :placa'), 
-            {"placa": detected_plate}
-        ).fetchone()
-        
-        if not check_vehiculo and detected_plate != "NO_DETECTADA":
-            # B. AUTO-REGISTRO: Si es nueva, la creamos primero
-            # Usamos Id_Propietario = 1 como usuario genérico "Sistema"
-            db.execute(text("""
-                INSERT INTO public."Vehiculos" ("Vehiculo_Placa", "Marca", "Modelo", "Color", "Empresa", "Id_Propietario")
-                VALUES (:placa, 'Desconocido', 'Auto-Registrado', 'N/A', 'Visitante Puerto', 1)
-            """), {"placa": detected_plate})
-            status = "Nuevo vehículo registrado. "
-        
-        # C. Insertar el acceso (Esto siempre se ejecuta si hay placa)
-        if detected_plate != "NO_DETECTADA":
+        if detected_plate != "NO_DETECTADA" and len(detected_plate) >= 3:
+            check_vehiculo = db.execute(
+                text('SELECT 1 FROM public."Vehiculos" WHERE "Vehiculo_Placa" = :placa'), 
+                {"placa": detected_plate}
+            ).fetchone()
+            
+            if not check_vehiculo:
+                db.execute(text("""
+                    INSERT INTO public."Vehiculos" ("Vehiculo_Placa", "Marca", "Modelo", "Color", "Empresa", "Id_Propietario")
+                    VALUES (:placa, 'Desconocido', 'Auto-Registrado', 'N/A', 'Visitante Puerto', 1)
+                """), {"placa": detected_plate})
+                status = "Nuevo vehículo registrado. "
+            
             db.execute(text("""
                 INSERT INTO public."Registros_Accesos" ("Vehiculo_Placa", "Fecha_Entrada", "Foto_Placa")
                 VALUES (:placa, NOW(), :foto)
             """), {"placa": detected_plate, "foto": filename})
             db.commit()
-            status += "Acceso concedido y guardado."
+            status += "Acceso concedido."
         else:
-            status = "No se detectó ninguna placa para registrar."
+            status = "No se detectó una placa legible."
+            detected_plate = "NO_DETECTADA"
 
         return {
             "plate": detected_plate,
             "confidence": max_conf,
-            "image_url": f"http://localhost:8000/static/plates/{filename}",
+            "image_url": f"http://192.168.100.64:8000/static/plates/{filename}",
             "status": status
         }
 
     except Exception as e:
         db.rollback()
-        return {
-            "plate": "Error",
-            "confidence": 0.0,
-            "image_url": "",
-            "status": f"Error crítico: {str(e)}"
-        }
+        raise HTTPException(status_code=500, detail=f"Error crítico: {str(e)}")
