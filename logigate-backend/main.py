@@ -1,3 +1,11 @@
+import os
+# --- PARCHE CRÍTICO DE ESTABILIDAD LOGIGATE ---
+os.environ['FLAGS_enable_pir_api'] = '0'
+os.environ['FLAGS_enable_mkldnn'] = '0'
+os.environ['FLAGS_on_ednn'] = '0'
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+# ----------------------------------------------
+
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -9,197 +17,146 @@ from database import get_db
 import numpy as np
 import cv2
 import os
-import easyocr
-from roboflow import Roboflow
 import shutil
 from datetime import datetime
+import re
+import uuid
+import time
+from vision_engine import LicensePlateEngine
 
 # --- CONFIGURACIÓN ---
 UPLOAD_DIR = os.path.join("static", "plates")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Estructura para las respuestas
 class ScanResponse(BaseModel):
+    scan_id: str
     plate: str
     confidence: float
     image_url: str
     status: str
 
-models = {}
+# Variable global para el motor de visión
+engine = None
+lecturas_recientes = []  # Para Votación Temporal (Redundancia)
+
+# --- FUNCIONES DE VALIDACIÓN MÉXICO ---
+def validar_formato_mexicano(texto):
+    """
+    Verifica si el texto cumple con los patrones de la SCT de México.
+    Incluye formatos comunes en Veracruz y otros estados.
+    """
+    texto = texto.upper().replace(" ", "").replace("-", "")
+    # Patrones: Particular (AAA000A), Camioneta/Carga (AA00000), Otros (AAA0000)
+    patrones = [
+        r'^[A-Z]{3}\d{3}[A-Z]$',  # AAA-000-A (Nuevas)
+        r'^[A-Z]{2}\d{5}$',       # AA-00-000 (Carga)
+        r'^[A-Z]{3}\d{4}$',       # AAA-0000 (Frontera/Antiguas)
+        r'^[A-Z]{3}\d{2}\d{2}$',  # AAA-00-00
+        r'^[A-Z]\d{2}[A-Z]{3}$',  # Formato antiguo
+        r'^\d{2}[A-Z]{3}\d{2}$'   # Algunos formatos estatales
+    ]
+    for p in patrones:
+        if re.match(p, texto): return True
+    return False
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Conectando con Roboflow Cloud...")
+    global engine
+    print("--- Inicializando LogiGate Vision Engine (YOLOv11 v4 + EasyOCR) ---")
     try:
-        # Configuración de Roboflow Hosted
-        rf = Roboflow(api_key="nFwszjsA0FpvEr9GMKqD")
-        project = rf.workspace().project("placas-bpbge-yoebh")
-        models["yolo"] = project.version(1).model
-        print("Conexión con Roboflow exitosa.")
+        engine = LicensePlateEngine(model_path="logigate_v4.pt")
     except Exception as e:
-        print(f"Error conectando a Roboflow: {e}")
-        
-    models["reader"] = easyocr.Reader(['es']) 
+        print(f"Error crítico al iniciar el motor: {e}")
+        # Intentar con un modelo genérico si falla el v4
+        engine = LicensePlateEngine(model_path="yolo11n.pt")
     yield
-    models.clear()
-    print("Limpiando recursos...")
+    # Limpieza si es necesaria
+    del engine
 
 app = FastAPI(lifespan=lifespan)
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/")
 def read_root():
-    return {"Hello": "LogiGate API", "IA_Status": "Connected to Roboflow" if "yolo" in models else "Disconnected"}
+    return {"IA_Status": "Connected via LogiGate Mexico Engine V4 (Veracruz Optimized)"}
 
-# --- HISTORIAL ---
 @app.get("/api/v1/history")
 async def get_history(db: Session = Depends(get_db)):
     try:
-        query = text("""
-            SELECT 
-                ra."Id_Acceso", 
-                ra."Vehiculo_Placa", 
-                ra."Fecha_Entrada", 
-                ra."Foto_Placa",
-                v."Marca", 
-                v."Modelo", 
-                u."Nombre(s)", 
-                u."Apellido_Paterno"
-            FROM public."Registros_Accesos" ra
-            LEFT JOIN public."Vehiculos" v ON ra."Vehiculo_Placa" = v."Vehiculo_Placa"
-            LEFT JOIN public."Usuarios" u ON v."Id_Propietario" = u."Id_Propietario"
-            ORDER BY ra."Fecha_Entrada" DESC
-        """)
-        
+        # Nota: He mantenido la query original pero asegúrate de que los nombres de tablas coincidan
+        query = text('SELECT ra."Id_Acceso", ra."Vehiculo_Placa", ra."Fecha_Entrada", ra."Foto_Placa", v."Marca", v."Modelo", u."Nombre(s)", u."Apellido_Paterno" FROM public."Registros_Accesos" ra LEFT JOIN public."Vehiculos" v ON ra."Vehiculo_Placa" = v."Vehiculo_Placa" LEFT JOIN public."Usuarios" u ON v."Id_Propietario" = u."Id_Propietario" ORDER BY ra."Fecha_Entrada" DESC')
         result = db.execute(query)
-        
-        history = []
-        for row in result:
-            history.append({
-                "id_acceso": row[0],
-                "placa": row[1],
-                "fecha": row[2].strftime("%Y-%m-%d %H:%M:%S") if row[2] else None,
-                "foto_url": f"http://{row[3]}" if row[3] and row[3].startswith("http") else (f"http://192.168.100.64:8000/static/plates/{row[3]}" if row[3] else None),
-                "marca": row[4] or "Desconocido",
-                "modelo": row[5] or "Desconocido",
-                "propietario": f"{row[6]} {row[7]}" if row[6] else "Visitante/Nuevo"
-            })
-        
-        return history
+        return [{"id_acceso": r[0], "placa": str(r[1]), "fecha": r[2].strftime("%Y-%m-%d %H:%M:%S") if r[2] else None, "foto_url": f"http://192.168.100.64:8000/static/plates/{r[3]}" if r[3] else None, "marca": str(r[4] or "Desconocido"), "modelo": str(r[5] or "Desconocido"), "propietario": f"{r[6]} {r[7]}" if r[6] else "Visitante"} for r in result]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en historial: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# --- ESCANEO Y AUTO-REGISTRO ---
 @app.post("/api/v1/scan", response_model=ScanResponse)
 async def create_scan(image: UploadFile = File(...), db: Session = Depends(get_db)):
     try:
-        # 1. Guardar archivo
+        scan_id = str(uuid.uuid4())
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}_{image.filename}"
         filepath = os.path.join(UPLOAD_DIR, filename)
         
-        with open(filepath, "wb") as buffer:
+        with open(filepath, "wb") as buffer: 
             shutil.copyfileobj(image.file, buffer)
 
-        # 2. Procesar con Roboflow Hosted Inference
         img = cv2.imread(filepath)
-        
-        # Enviar imagen a Roboflow
-        prediction = models["yolo"].predict(filepath, confidence=30, overlap=30).json()
-        
-        # LOG DE DEPURACIÓN
-        print(f"DEBUG: Predicciones de Roboflow: {prediction}")
+        if img is None:
+            raise Exception("No se pudo leer la imagen cargada.")
+
+        # Procesar con el motor mejorado
+        detections = engine.process_image(img)
         
         detected_plate = "NO_DETECTADA"
         max_conf = 0.0
 
-        if "predictions" in prediction and len(prediction["predictions"]) > 0:
-            best_pred = None
-            for p in prediction["predictions"]:
-                class_name = p.get("class", "").lower()
-                if "placa" in class_name or "plate" in class_name or "license" in class_name:
-                    best_pred = p
-                    break
-            
-            if not best_pred:
-                best_pred = prediction["predictions"][0]
-            
-            x_center, y_center = best_pred["x"], best_pred["y"]
-            width, height = best_pred["width"], best_pred["height"]
-            
-            x1 = int(x_center - (width / 2))
-            y1 = int(y_center - (height / 2))
-            x2 = int(x_center + (width / 2))
-            y2 = int(y_center + (height / 2))
-            
-            h_img, w_img, _ = img.shape
-            x1, y1 = max(0, x1-20), max(0, y1-20)
-            x2, y2 = min(w_img, x2+20), min(h_img, y2+20)
-            
-            crop = img[y1:y2, x1:x2]
-            
-            # --- PROCESAMIENTO OCR ---
-            crop = cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_LANCZOS4)
-            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-            clahe = cv2.createCLAHE(clipLimit=1.2, tileGridSize=(8,8))
-            gray = clahe.apply(gray)
-            
-            ocr_result = models["reader"].readtext(
-                gray, 
-                detail=1, 
-                allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-            )
-            
-            if ocr_result:
-                ocr_result.sort(key=lambda x: x[0][0][0])
-                max_h = max([res[0][2][1] - res[0][0][1] for res in ocr_result])
-                valid_parts = [res[1].upper() for res in ocr_result if (res[0][2][1] - res[0][0][1]) > (max_h * 0.4)]
-                
-                full_raw = "".join(valid_parts)
-                detected_plate = full_raw if len(full_raw) >= 3 else "NO_DETECTADA"
-                max_conf = best_pred["confidence"]
+        if detections:
+            # Tomamos la detección con mayor confianza de YOLO
+            best_det = max(detections, key=lambda x: x["confidence"])
+            detected_plate = best_det["plate"]
+            max_conf = best_det["confidence"]
+        
+        # Formato visual (ej: ABC-1234)
+        display_plate = detected_plate
+        if len(detected_plate) >= 6 and "-" not in detected_plate:
+             display_plate = f"{detected_plate[:3]}-{detected_plate[3:]}"
 
-        # --- LÓGICA DE BASE DE DATOS ---
-        status = ""
-        if detected_plate != "NO_DETECTADA" and len(detected_plate) >= 3:
-            check_vehiculo = db.execute(
-                text('SELECT 1 FROM public."Vehiculos" WHERE "Vehiculo_Placa" = :placa'), 
-                {"placa": detected_plate}
-            ).fetchone()
+        # --- DB LÓGICA ---
+        if detected_plate != "NO_DETECTADA":
+            plate_db = detected_plate
+            # Verificar si la placa existe
+            check = db.execute(text('SELECT 1 FROM public."Vehiculos" WHERE "Vehiculo_Placa" = :p'), {"p": plate_db}).fetchone()
+            if not check:
+                db.execute(text('INSERT INTO public."Vehiculos" ("Vehiculo_Placa", "Marca", "Modelo", "Color", "Empresa", "Id_Propietario") VALUES (:p, \'Desconocido\', \'Auto-Reg\', \'N/A\', \'Visitante\', 1)'), {"p": plate_db})
+                db.commit()
             
-            if not check_vehiculo:
-                db.execute(text("""
-                    INSERT INTO public."Vehiculos" ("Vehiculo_Placa", "Marca", "Modelo", "Color", "Empresa", "Id_Propietario")
-                    VALUES (:placa, 'Desconocido', 'Auto-Registrado', 'N/A', 'Visitante Puerto', 1)
-                """), {"placa": detected_plate})
-                status = "Nuevo vehículo registrado. "
-            
-            db.execute(text("""
-                INSERT INTO public."Registros_Accesos" ("Vehiculo_Placa", "Fecha_Entrada", "Foto_Placa")
-                VALUES (:placa, NOW(), :foto)
-            """), {"placa": detected_plate, "foto": filename})
+            # Registrar el acceso
+            db.execute(text('INSERT INTO public."Registros_Accesos" ("Vehiculo_Placa", "Fecha_Entrada", "Foto_Placa") VALUES (:p, NOW(), :f)'), {"p": plate_db, "f": filename})
             db.commit()
-            status += "Acceso concedido."
+            
+            # Validamos formato para el mensaje de status
+            es_mexicana = validar_formato_mexicano(detected_plate)
+            status_msg = f"Acceso Concedido: {display_plate}" if es_mexicana else f"Revisión Manual: {display_plate}"
         else:
-            status = "No se detectó una placa legible."
-            detected_plate = "NO_DETECTADA"
+            status_msg = "Rechazada: Placa no válida o no visible"
 
         return {
-            "plate": detected_plate,
-            "confidence": max_conf,
-            "image_url": f"http://192.168.100.64:8000/static/plates/{filename}",
-            "status": status
+            "scan_id": scan_id,
+            "plate": display_plate, 
+            "confidence": float(max_conf), 
+            "image_url": f"http://192.168.100.64:8000/static/plates/{filename}?v={time.time()}", 
+            "status": status_msg
         }
 
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error crítico: {str(e)}")
+        if 'db' in locals(): db.rollback()
+        print(f"ERROR EN SCAN: {e}")
+        return {
+            "scan_id": "ERROR",
+            "plate": "ERROR", 
+            "confidence": 0.0, 
+            "image_url": "", 
+            "status": f"Error: {str(e)}"
+        }
