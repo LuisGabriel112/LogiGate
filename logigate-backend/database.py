@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker
 
 # Estructura: postgresql://usuario:contraseña@host:puerto/nombre_bd
 # Cambia la IP por 127.0.0.1 (localhost)
-SQLALCHEMY_DATABASE_URL = "postgresql://postgres:S1stemas24@127.0.0.1:5432/logigate"
+SQLALCHEMY_DATABASE_URL = "postgresql://postgres:S1stemas24@192.168.100.47:5432/logigate"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

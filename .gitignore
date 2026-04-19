@@ -1,8 +1,7 @@
+logigate-backend/static/plates/*
+logigate-backend/__pycache__/
+logigate-front/node_modules/
+logigate-front/.svelte-kit/
 venv/
-runs/
-__pycache__/
-*.pyc
 .env
-logigate-backend/Placasdetect-1/
-logigate-backend/yolo11n.pt
-logigate-backend/yolo11s.pt
+*.pt

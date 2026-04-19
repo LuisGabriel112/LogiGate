@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { Truck, RefreshCw, Info } from 'lucide-svelte';
 
-    const API = 'https://192.168.1.68:8000';
+    const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
     const TOTAL = 100;
     const COLS  = 10;
 

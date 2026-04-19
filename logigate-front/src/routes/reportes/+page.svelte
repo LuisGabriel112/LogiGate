@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { TrendingUp, Clock, Truck, Download, Search, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-svelte';
 
-    const API = 'https://192.168.1.68:8000';
+    const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
 
     let registros  = $state([]);
     let loading    = $state(true);

@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { Scan, CheckCircle, XCircle, RotateCcw, Upload, ImagePlus } from 'lucide-svelte';
 
-    const API = 'http://localhost:8000';
+    const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
 
     let videoSource;
     let canvasElement;
@@ -202,9 +202,9 @@
         <!-- Resultado -->
         {#if resultado}
             <div class="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden">
-                {#if resultado.image_url}
-                    <img src={resultado.image_url} alt="Placa capturada" class="w-full object-cover max-h-48" />
-                {/if}
+                    {#if resultado.image_url}
+                        <img src="{API}{resultado.image_url}" alt="Placa capturada" class="w-full object-cover max-h-48" />
+                    {/if}
 
                 <div class="p-5 space-y-4">
                     <div class="flex items-center gap-3">

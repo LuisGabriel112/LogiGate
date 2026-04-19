@@ -87,7 +87,7 @@ async def get_history(db: Session = Depends(get_db)):
         # Nota: He mantenido la query original pero asegúrate de que los nombres de tablas coincidan
         query = text('SELECT ra."Id_Acceso", ra."Vehiculo_Placa", ra."Fecha_Entrada", ra."Foto_Placa", v."Marca", v."Modelo", u."Nombre(s)", u."Apellido_Paterno" FROM public."Registros_Accesos" ra LEFT JOIN public."Vehiculos" v ON ra."Vehiculo_Placa" = v."Vehiculo_Placa" LEFT JOIN public."Usuarios" u ON v."Id_Propietario" = u."Id_Propietario" ORDER BY ra."Fecha_Entrada" DESC')
         result = db.execute(query)
-        return [{"id_acceso": r[0], "placa": str(r[1]), "fecha": r[2].strftime("%Y-%m-%d %H:%M:%S") if r[2] else None, "foto_url": f"http://localhost:8000/static/plates/{r[3]}" if r[3] else None, "marca": str(r[4] or "Desconocido"), "modelo": str(r[5] or "Desconocido"), "propietario": f"{r[6]} {r[7]}" if r[6] else "Visitante"} for r in result]
+        return [{"id_acceso": r[0], "placa": str(r[1]), "fecha": r[2].strftime("%Y-%m-%d %H:%M:%S") if r[2] else None, "foto_url": f"/static/plates/{r[3]}" if r[3] else None, "marca": str(r[4] or "Desconocido"), "modelo": str(r[5] or "Desconocido"), "propietario": f"{r[6]} {r[7]}" if r[6] else "Visitante"} for r in result]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -146,7 +146,7 @@ async def create_scan(image: UploadFile = File(...), db: Session = Depends(get_d
             "scan_id": scan_id,
             "plate": display_plate, 
             "confidence": float(max_conf), 
-            "image_url": f"http://localhost:8000/static/plates/{filename}?v={time.time()}", 
+            "image_url": f"/static/plates/{filename}?v={time.time()}", 
             "status": status_msg
         }
 
