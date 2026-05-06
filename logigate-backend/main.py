@@ -42,12 +42,13 @@ engine_ia = None
 def validar_formato_mexicano(texto):
     texto = texto.upper().replace(" ", "").replace("-", "")
     patrones = [
-        r'^[A-Z]{3}\d{3}[A-Z]$',
-        r'^[A-Z]{2}\d{5}$',
-        r'^[A-Z]{3}\d{4}$',
-        r'^[A-Z]{3}\d{2}\d{2}$',
-        r'^[A-Z]\d{2}[A-Z]{3}$',
-        r'^\d{2}[A-Z]{3}\d{2}$'
+        r'^[A-Z]{3}\d{3}[A-Z]?$', # 6-7 caracteres (CDMX, Edomex)
+        r'^[A-Z]{2}\d{5}$',        # 7 caracteres
+        r'^[A-Z]{3}\d{4}$',        # 7 caracteres
+        r'^[A-Z]{3}\d{2}\d{2}$',   # 7 caracteres
+        r'^[A-Z]\d{2}[A-Z]{3}$',   # 6 caracteres
+        r'^\d{2}[A-Z]{3}\d{2}$',   # 7 caracteres
+        r'^[A-Z]{3}\d{3}[A-Z]{2}$' # 8 caracteres (Nuevas)
     ]
     return any(re.match(p, texto) for p in patrones)
 
