@@ -1,6 +1,7 @@
 <script>
     import { onMount } from 'svelte';
-    import { TrendingUp, Clock, Truck, Download, Search, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-svelte';
+    import { TrendingUp, Clock, Truck, Download, Search, AlertTriangle, ChevronLeft, ChevronRight, Calendar } from 'lucide-svelte';
+    import { addToast } from '$lib/toast.svelte.js';
 
     const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
 
@@ -9,6 +10,8 @@
     let busqueda   = $state('');
     let filtroEstado = $state('Todos');
     let pagina     = $state(1);
+    let fechaDesde = $state('');
+    let fechaHasta = $state('');
     const POR_PAG  = 10;
 
     const token = () => localStorage.getItem('token') || '';
@@ -85,18 +88,43 @@
     // ── Filtrado y paginación ─────────────────────────────────
     const filtrados = $derived(
         registros.filter(r => {
-            const matchBusq = !busqueda || r.placa?.toLowerCase().includes(busqueda.toLowerCase()) || r.empresa?.toLowerCase().includes(busqueda.toLowerCase());
+            const matchBusq = !busqueda || r.placa?.toLowerCase().includes(busqueda.toLowerCase()) || r.empresa?.toLowerCase().includes(busqueda.toLowerCase()) || r.conductor?.toLowerCase().includes(busqueda.toLowerCase());
             const matchEst  = filtroEstado === 'Todos' || r.estado === filtroEstado;
-            return matchBusq && matchEst;
+            const rDate     = r.created_at ? new Date(r.created_at).toISOString().slice(0, 10) : '';
+            const matchDesde = !fechaDesde || rDate >= fechaDesde;
+            const matchHasta = !fechaHasta || rDate <= fechaHasta;
+            return matchBusq && matchEst && matchDesde && matchHasta;
         })
     );
 
     const totalPaginas = $derived(Math.max(1, Math.ceil(filtrados.length / POR_PAG)));
     const paginados    = $derived(filtrados.slice((pagina - 1) * POR_PAG, pagina * POR_PAG));
 
-    function cambiarFiltro(estado) {
-        filtroEstado = estado;
-        pagina = 1;
+    function cambiarFiltro(estado) { filtroEstado = estado; pagina = 1; }
+
+    function exportCSV() {
+        const headers = ['Fecha', 'Hora', 'Placa', 'Empresa', 'Tipo', 'Estado', 'IA %', 'Autorizado por'];
+        const rows = filtrados.map(r => [
+            fmtFecha(r.created_at),
+            fmtHora(r.created_at),
+            r.placa ?? '',
+            r.empresa ?? '',
+            r.tipo_unidad ?? '',
+            r.estado ?? '',
+            r.confianza != null ? r.confianza + '%' : '',
+            r.autorizado_por ?? '',
+        ]);
+        const csv = [headers, ...rows]
+            .map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+            .join('\n');
+        const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href = url;
+        a.download = `logigate-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        addToast(`CSV exportado · ${filtrados.length} registros`, 'success');
     }
 </script>
 
@@ -108,14 +136,9 @@
             <h2 class="text-xl md:text-2xl font-black text-white tracking-tight">Reportes Históricos</h2>
             <p class="text-xs text-slate-500 mt-1">Análisis de rendimiento operativo.</p>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
-            <button class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold px-3 py-2 rounded-lg transition-colors">
-                <Download size={13} /> PDF
-            </button>
-            <button class="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-black text-xs font-black px-3 py-2 rounded-lg transition-colors">
-                <Download size={13} /> Excel
-            </button>
-        </div>
+        <button onclick={exportCSV} class="flex items-center gap-2 bg-orange-500 hover:bg-orange-400 active:scale-[0.97] text-black text-xs font-black px-4 py-2 rounded-lg transition-all shadow-lg shadow-orange-500/20 shrink-0">
+            <Download size={13} /> Exportar CSV
+        </button>
     </div>
 
     <!-- Métricas -->
@@ -193,11 +216,11 @@
                 <!-- Búsqueda -->
                 <div class="relative flex-1">
                     <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input bind:value={busqueda} placeholder="Buscar placa o empresa..."
+                    <input bind:value={busqueda} placeholder="Buscar placa, empresa o conductor..."
                         class="w-full bg-[#0D1117] border border-slate-800 rounded-lg pl-9 pr-4 py-2 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-orange-500 transition-colors" />
                 </div>
                 <!-- Filtro estado -->
-                <div class="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 overflow-x-auto">
+                <div class="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 overflow-x-auto shrink-0">
                     {#each ESTADOS as est}
                         <button onclick={() => cambiarFiltro(est)}
                             class="shrink-0 px-2.5 py-1.5 rounded-md text-[10px] font-black uppercase transition-all {filtroEstado === est ? 'bg-orange-500 text-black' : 'text-slate-500 hover:text-white'}">
@@ -205,6 +228,19 @@
                         </button>
                     {/each}
                 </div>
+            </div>
+            <!-- Filtro fechas -->
+            <div class="flex items-center gap-2">
+                <Calendar size={13} class="text-slate-600 shrink-0" />
+                <input bind:value={fechaDesde} type="date" title="Desde"
+                    class="bg-[#0D1117] border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-orange-500 transition-colors" />
+                <span class="text-slate-700 text-xs">—</span>
+                <input bind:value={fechaHasta} type="date" title="Hasta"
+                    class="bg-[#0D1117] border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-orange-500 transition-colors" />
+                {#if fechaDesde || fechaHasta}
+                    <button onclick={() => { fechaDesde = ''; fechaHasta = ''; pagina = 1; }}
+                        class="text-[10px] text-orange-500 hover:text-orange-400 font-bold transition-colors shrink-0">Limpiar</button>
+                {/if}
             </div>
         </div>
 

@@ -1,6 +1,6 @@
 <script>
     import { onMount } from 'svelte';
-    import { Truck, CheckCircle2, Activity, TrendingUp, TrendingDown, ArrowUpRight, RefreshCw, AlertTriangle } from 'lucide-svelte';
+    import { Truck, CheckCircle2, Activity, TrendingUp, TrendingDown, ArrowUpRight, RefreshCw, AlertTriangle, Minus } from 'lucide-svelte';
 
     const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
 
@@ -10,6 +10,28 @@
     let loading  = $state(true);
     let error    = $state(null);
     let refreshing = $state(false);
+    let display  = $state({ en_patio: 0, salidas_hoy: 0, denegados: 0 });
+    let ultimoEscaneo = $state('');
+
+    function animateTo(key, target) {
+        const start = display[key];
+        if (start === target) return;
+        const steps = 24;
+        let i = 0;
+        const iv = setInterval(() => {
+            i++;
+            display[key] = Math.round(start + (target - start) * (i / steps));
+            if (i >= steps) { display[key] = target; clearInterval(iv); }
+        }, 18);
+    }
+
+    function updateUltimo() {
+        if (!actividad.length) { ultimoEscaneo = ''; return; }
+        const diff = Math.floor((Date.now() - new Date(actividad[0].created_at)) / 1000);
+        if (diff < 60)   ultimoEscaneo = 'hace un momento';
+        else if (diff < 3600) ultimoEscaneo = `hace ${Math.floor(diff / 60)} min`;
+        else              ultimoEscaneo = `hace ${Math.floor(diff / 3600)} h`;
+    }
 
     const estadoColor = {
         entrada:  'bg-green-500/10 text-green-400 border-green-500/20',
@@ -32,9 +54,14 @@
                 fetch(`${API}/api/v1/actividad?limit=6`),
             ]);
 
-            if (sRes.ok) stats    = await sRes.json();
+            if (sRes.ok) {
+                stats = await sRes.json();
+                animateTo('en_patio',    stats.en_patio);
+                animateTo('salidas_hoy', stats.salidas_hoy);
+                animateTo('denegados',   stats.denegados);
+            }
             if (fRes.ok) flujo    = await fRes.json();
-            if (aRes.ok) actividad = await aRes.json();
+            if (aRes.ok) { actividad = await aRes.json(); updateUltimo(); }
         } catch (e) {
             error = 'Sin conexión con el servidor';
         } finally {
@@ -45,18 +72,29 @@
 
     onMount(() => {
         cargarDatos();
-        const iv = setInterval(cargarDatos, 30_000);
-        return () => clearInterval(iv);
+        const iv  = setInterval(cargarDatos, 30_000);
+        const iv2 = setInterval(updateUltimo, 60_000);
+        return () => { clearInterval(iv); clearInterval(iv2); };
     });
 
     const maxFlujo = $derived(Math.max(...flujo.map(d => d.count), 1));
+
+    const tendencia = $derived(() => {
+        if (flujo.length < 2) return null;
+        const hoy  = flujo[flujo.length - 1]?.count ?? 0;
+        const ayer = flujo[flujo.length - 2]?.count ?? 0;
+        const diff = hoy - ayer;
+        if (diff === 0 || ayer === 0) return { dir: 'igual', diff: 0, pct: 0 };
+        const pct = ayer > 0 ? Math.round(Math.abs(diff / ayer) * 100) : 0;
+        return { dir: diff > 0 ? 'sube' : 'baja', diff: Math.abs(diff), pct };
+    });
 
     const disponibles = $derived(Math.max(0, stats.capacidad_total - stats.en_patio));
 
     const kpis = $derived([
         {
             label: 'Unidades en Patio',
-            value: stats.en_patio,
+            value: display.en_patio,
             sub: `de ${stats.capacidad_total} cajones`,
             pct: stats.ocupacion_pct,
             icon: Truck,
@@ -72,8 +110,8 @@
         },
         {
             label: 'Denegados Hoy',
-            value: stats.denegados,
-            sub: `${stats.salidas_hoy} salidas registradas`,
+            value: display.denegados,
+            sub: `${display.salidas_hoy} salidas registradas`,
             pct: null,
             icon: Activity,
             color: 'red',
@@ -93,6 +131,9 @@
     <div class="flex items-center justify-between">
         <div>
             <p class="text-xs text-slate-600">Actualización automática cada 30 s</p>
+            {#if ultimoEscaneo}
+                <p class="text-[11px] text-slate-700 mt-0.5">Último escaneo: <span class="text-orange-500/70">{ultimoEscaneo}</span></p>
+            {/if}
         </div>
         <button
             onclick={cargarDatos}
@@ -153,6 +194,24 @@
                     <h4 class="text-sm font-bold text-white">Flujo de Unidades</h4>
                     <p class="text-[10px] text-slate-600 mt-0.5">Movimientos totales por día — últimos 7 días</p>
                 </div>
+                {#if tendencia() && !loading}
+                    {@const t = tendencia()}
+                    <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-black
+                        {t.dir === 'sube'  ? 'bg-green-500/10 border-green-500/20 text-green-400' :
+                         t.dir === 'baja'  ? 'bg-red-500/10   border-red-500/20   text-red-400'   :
+                                             'bg-slate-800/60 border-slate-700    text-slate-500'}">
+                        {#if t.dir === 'sube'}
+                            <TrendingUp size={11} />
+                            +{t.pct}% vs ayer
+                        {:else if t.dir === 'baja'}
+                            <TrendingDown size={11} />
+                            -{t.pct}% vs ayer
+                        {:else}
+                            <Minus size={11} />
+                            igual que ayer
+                        {/if}
+                    </div>
+                {/if}
             </div>
 
             {#if loading}
