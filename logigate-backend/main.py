@@ -24,6 +24,7 @@ import re
 import uuid
 import time
 from vision_engine import LicensePlateEngine
+from security_utils import encrypt_data, decrypt_data
 
 UPLOAD_DIR = os.path.join("static", "plates")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -122,9 +123,9 @@ async def create_scan(image: UploadFile = File(...), db: Session = Depends(get_d
             estado = "denegado"
             status_msg = "Rechazada: Placa no válida o no visible"
 
-        # Guardar en tabla registros (modelo SQLAlchemy)
+        # Guardar en tabla registros (modelo SQLAlchemy) - DATOS ENCRIPTADOS PARA CIBERSEGURIDAD
         registro = Registro(
-            placa=display_plate,
+            placa=encrypt_data(display_plate),
             estado=estado,
             confianza=round(max_conf * 100),
             autorizado_por="IA-LogiGate",
@@ -168,14 +169,14 @@ def get_registros(
     return [
         {
             "id": r.id,
-            "placa": r.placa,
+            "placa": decrypt_data(r.placa),
             "empresa": r.empresa,
             "tipo_unidad": r.tipo_unidad,
-            "conductor": r.conductor,
+            "conductor": decrypt_data(r.conductor),
             "estado": r.estado,
             "confianza": r.confianza,
             "autorizado_por": r.autorizado_por,
-            "notas": r.notas,
+            "notas": decrypt_data(r.notas),
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
         for r in rows
@@ -243,7 +244,7 @@ def get_actividad(limit: int = Query(default=5, le=50), db: Session = Depends(ge
     return [
         {
             "id": r.id,
-            "placa": r.placa,
+            "placa": decrypt_data(r.placa),
             "empresa": r.empresa or "—",
             "estado": r.estado,
             "hora": r.created_at.strftime("%H:%M") if r.created_at else "—",
