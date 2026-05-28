@@ -78,12 +78,6 @@ npm install
 npm run dev
 ```
 
-**Variables de entorno**
-
-```env
-DATABASE_URL=postgresql://user:password@localhost:5432/logigate
-SECRET_KEY=your_secret_key
-```
 
 ---
 
