@@ -81,9 +81,13 @@ npm run dev
 
 ---
 
-## 👤 Autor
+## 👤 Autores
 
 **Luis Gabriel Venegas Saucedo**
 [LinkedIn](https://linkedin.com/in/luis-gabriel-venegas-saucedo-26a68b236) ·
 [GitHub](https://github.com/LuisGabriel112) ·
 venegassaucedoluis@gmail.com
+**Joshua Neftalí Marín Leynez**
+[LinkedIn](https://www.linkedin.com/in/joshua-neftal%C3%AD-mar%C3%ADn-leynez-6519213a7/) ·
+[GitHub](https://github.com/joshuamar0902) ·
+joshuaneft30@gmail.com
