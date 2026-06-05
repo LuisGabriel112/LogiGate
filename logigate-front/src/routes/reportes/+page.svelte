@@ -3,7 +3,7 @@
     import { TrendingUp, Clock, Truck, Download, Search, AlertTriangle, ChevronLeft, ChevronRight, Calendar } from 'lucide-svelte';
     import { addToast } from '$lib/toast.svelte.js';
 
-    const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
+    const API = '';
 
     let registros  = $state([]);
     let loading    = $state(true);

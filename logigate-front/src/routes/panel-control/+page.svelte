@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { Truck, CheckCircle2, Activity, TrendingUp, TrendingDown, ArrowUpRight, RefreshCw, AlertTriangle, Minus } from 'lucide-svelte';
 
-    const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
+    const API = '';
 
     let stats    = $state({ en_patio: 0, salidas_hoy: 0, denegados: 0, capacidad_total: 100, ocupacion_pct: 0 });
     let flujo    = $state([]);

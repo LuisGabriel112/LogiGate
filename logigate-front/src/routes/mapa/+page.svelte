@@ -3,7 +3,7 @@
     import { Truck, RefreshCw, Info, Grid3x3, X } from 'lucide-svelte';
     import { fly } from 'svelte/transition';
 
-    const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
+    const API = '';
     const TOTAL = 100;
     const COLS  = 10;
     const FILAS = ['A','B','C','D','E','F','G','H','I','J'];

@@ -28,3 +28,17 @@ class Registro(Base):
     notas = Column(Text, nullable=True)
     autorizado_por = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class RegistroDanos(Base):
+    __tablename__ = "registros_danos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    placa = Column(String, nullable=True)
+    imagen_url = Column(String, nullable=True)
+    danos_detectados = Column(Integer, default=0)
+    severidad = Column(String, nullable=True)   # sin_danos | leve | moderado | grave
+    damage_ratio = Column(Float, nullable=True)
+    detecciones_json = Column(Text, nullable=True)
+    inspeccionado_por = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

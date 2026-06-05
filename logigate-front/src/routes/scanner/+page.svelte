@@ -4,7 +4,7 @@
     import { addToast } from '$lib/toast.svelte.js';
     import { settings } from '$lib/settings.svelte.js';
 
-    const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
+    const API = '';
     const HIST_KEY = 'lg_scan_history';
 
     let videoSource = $state();

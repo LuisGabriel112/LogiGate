@@ -6,7 +6,7 @@ os.environ['FLAGS_on_ednn'] = '0'
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 # ----------------------------------------------
 
-from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, Query
+from fastapi import FastAPI, File, Form, UploadFile, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func, cast, Date
 from database import get_db, init_db
-from models import Registro
+from models import Registro, RegistroDanos
 import numpy as np
 import cv2
 import os
@@ -23,11 +23,15 @@ from datetime import datetime, date, timedelta
 import re
 import uuid
 import time
+import json
 from vision_engine import LicensePlateEngine
+from damage_engine import DamageDetectionEngine
 from security_utils import encrypt_data, decrypt_data
 
 UPLOAD_DIR = os.path.join("static", "plates")
+DAMAGE_DIR = os.path.join("static", "damages")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(DAMAGE_DIR, exist_ok=True)
 
 CAPACIDAD_TOTAL = 100
 
@@ -39,6 +43,7 @@ class ScanResponse(BaseModel):
     status: str
 
 engine_ia = None
+damage_engine_ia = None
 
 def validar_formato_mexicano(texto):
     texto = texto.upper().replace(" ", "").replace("-", "")
@@ -55,14 +60,27 @@ def validar_formato_mexicano(texto):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global engine_ia
-    init_db()  # Crea tablas si no existen
+    global engine_ia, damage_engine_ia
+    init_db()
     print("--- Inicializando LogiGate Vision Engine (YOLOv11 v4 + EasyOCR) ---")
     try:
         engine_ia = LicensePlateEngine(model_path="logigate_v4.pt")
     except Exception as e:
-        print(f"Error crítico al iniciar el motor: {e}")
+        print(f"Error crítico al iniciar el motor de placas: {e}")
         engine_ia = LicensePlateEngine(model_path="yolo11n.pt")
+
+    print("--- Inicializando Motor de Detección de Daños ---")
+    try:
+        from huggingface_hub import hf_hub_download
+        dmg_path = hf_hub_download(
+            repo_id="scythe410/vehicle-damage-detection-yolo",
+            filename="v2.pt"
+        )
+        damage_engine_ia = DamageDetectionEngine(model_path=dmg_path)
+    except Exception as e:
+        print(f"Error al cargar modelo de daños: {e}")
+        damage_engine_ia = None
+
     yield
     del engine_ia
 
@@ -281,3 +299,85 @@ async def get_history(db: Session = Depends(get_db)):
         ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ── Detección de Daños ────────────────────────────────────────────────────────
+
+@app.post("/api/v1/damage-scan")
+async def damage_scan(
+    image: UploadFile = File(...),
+    placa: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    if damage_engine_ia is None:
+        raise HTTPException(status_code=503, detail="Motor de daños no disponible.")
+    try:
+        scan_id = str(uuid.uuid4())
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"dmg_{timestamp}_{image.filename}"
+        filepath = os.path.join(DAMAGE_DIR, filename)
+
+        with open(filepath, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+
+        img = cv2.imread(filepath)
+        if img is None:
+            raise Exception("No se pudo leer la imagen.")
+
+        analysis = damage_engine_ia.analyze(img)
+        annotated = damage_engine_ia.annotate(img, analysis)
+
+        ann_filename = f"ann_{filename}"
+        cv2.imwrite(os.path.join(DAMAGE_DIR, ann_filename), annotated)
+
+        registro = RegistroDanos(
+            placa=encrypt_data(placa) if placa else "",
+            imagen_url=f"/static/damages/{ann_filename}",
+            danos_detectados=analysis["danos_detectados"],
+            severidad=analysis["severidad"],
+            damage_ratio=analysis["damage_ratio"],
+            detecciones_json=json.dumps(analysis["detecciones"]),
+        )
+        db.add(registro)
+        db.commit()
+        db.refresh(registro)
+
+        return {
+            "scan_id": scan_id,
+            "registro_id": registro.id,
+            "placa": placa,
+            "danos_detectados": analysis["danos_detectados"],
+            "severidad": analysis["severidad"],
+            "damage_ratio": analysis["damage_ratio"],
+            "detecciones": analysis["detecciones"],
+            "image_url": f"/static/damages/{ann_filename}?v={time.time()}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if 'db' in locals():
+            db.rollback()
+        print(f"ERROR EN DAMAGE-SCAN: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/damage-history")
+def get_damage_history(limit: int = Query(default=50, le=200), db: Session = Depends(get_db)):
+    rows = (
+        db.query(RegistroDanos)
+        .order_by(RegistroDanos.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "placa": decrypt_data(r.placa) if r.placa else "",
+            "imagen_url": r.imagen_url,
+            "danos_detectados": r.danos_detectados,
+            "severidad": r.severidad,
+            "damage_ratio": r.damage_ratio,
+            "detecciones": json.loads(r.detecciones_json) if r.detecciones_json else [],
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]

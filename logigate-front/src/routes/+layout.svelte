@@ -18,6 +18,7 @@
         ChevronRight,
         CheckCheck,
         ShieldAlert,
+        AlertTriangle,
         LogIn,
         LogOut as LogOutIcon,
         X,
@@ -25,7 +26,7 @@
 
     let { children } = $props();
 
-    const API = typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : 'http://localhost:8000';
+    const API = '';
 
     const showSidebar = $derived(page.url.pathname !== '/');
     const isConfig    = $derived(page.url.pathname === '/configuracion');
@@ -33,6 +34,7 @@
     const menuItems = [
         { name: 'Panel de Control',   short: 'Panel',    icon: LayoutDashboard, path: '/panel-control' },
         { name: 'Entradas / Salidas', short: 'Scanner',  icon: ArrowLeftRight,  path: '/scanner'       },
+        { name: 'Detección de Daños', short: 'Daños',    icon: AlertTriangle,   path: '/danos'         },
         { name: 'Mapa de Patio',      short: 'Mapa',     icon: Map,             path: '/mapa'          },
         { name: 'Reportes',           short: 'Reportes', icon: FileText,        path: '/reportes'      },
     ];
