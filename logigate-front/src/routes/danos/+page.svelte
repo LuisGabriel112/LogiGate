@@ -4,7 +4,7 @@
     import {
         ScanLine, Upload, ImagePlus, RotateCcw, History,
         AlertTriangle, CheckCircle, ShieldAlert, Camera,
-        Clock, Percent, Layers
+        Clock, Percent, Layers, TrendingUp
     } from 'lucide-svelte';
     import { addToast } from '$lib/toast.svelte.js';
 
@@ -71,7 +71,7 @@
             const blob = await res.blob();
             await postDamage(blob, 'captura.jpg');
         } catch (e) {
-            errorMsg = 'Error al enviar imagen.';
+            errorMsg = e.message || 'Error al enviar imagen.';
         } finally {
             isAnalyzing = false;
         }
@@ -82,7 +82,7 @@
         try {
             await postDamage(file, file.name);
         } catch (e) {
-            errorMsg = 'Error al enviar imagen.';
+            errorMsg = e.message || 'Error al enviar imagen.';
         } finally {
             isAnalyzing = false;
         }
@@ -95,7 +95,8 @@
         const r = await fetch(`${API}/api/v1/damage-scan`, { method: 'POST', body: fd });
         if (!r.ok) {
             const err = await r.json().catch(() => ({ detail: `Error ${r.status}` }));
-            throw new Error(err.detail);
+            const msg = typeof err.detail === 'string' ? err.detail : `Error ${r.status}`;
+            throw new Error(msg);
         }
         resultado = await r.json();
         addToast(
@@ -233,7 +234,7 @@
                         <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70">
                             <div class="w-12 h-12 border-2 border-slate-700 border-t-orange-500 rounded-full animate-spin"></div>
                             <p class="text-sm font-black text-white tracking-widest">ANALIZANDO DAÑOS</p>
-                            <p class="text-[10px] text-orange-400">Motor IA · YOLOv8</p>
+                            <p class="text-[10px] text-orange-400">Motor IA · YOLO</p>
                         </div>
                     </div>
                 {/if}
@@ -301,20 +302,27 @@
                                 </div>
 
                                 <!-- Stats -->
-                                <div class="grid grid-cols-2 gap-3">
-                                    <div class="bg-slate-800/30 rounded-xl p-3.5 border border-slate-800/60">
-                                        <div class="flex items-center gap-1.5 mb-2">
-                                            <Layers size={12} class="text-slate-600" />
-                                            <p class="text-[9px] uppercase tracking-widest text-slate-600 font-black">Daños detectados</p>
+                                <div class="grid grid-cols-3 gap-2">
+                                    <div class="bg-slate-800/30 rounded-xl p-3 border border-slate-800/60">
+                                        <div class="flex items-center gap-1 mb-2">
+                                            <Layers size={11} class="text-slate-600" />
+                                            <p class="text-[8px] uppercase tracking-widest text-slate-600 font-black">Daños</p>
                                         </div>
-                                        <p class="text-2xl font-black {sev.text}">{resultado.danos_detectados}</p>
+                                        <p class="text-xl font-black {sev.text}">{resultado.danos_detectados}</p>
                                     </div>
-                                    <div class="bg-slate-800/30 rounded-xl p-3.5 border border-slate-800/60">
-                                        <div class="flex items-center gap-1.5 mb-2">
-                                            <Percent size={12} class="text-slate-600" />
-                                            <p class="text-[9px] uppercase tracking-widest text-slate-600 font-black">Área afectada</p>
+                                    <div class="bg-slate-800/30 rounded-xl p-3 border border-slate-800/60">
+                                        <div class="flex items-center gap-1 mb-2">
+                                            <Percent size={11} class="text-slate-600" />
+                                            <p class="text-[8px] uppercase tracking-widest text-slate-600 font-black">Área</p>
                                         </div>
-                                        <p class="text-2xl font-black {sev.text}">{resultado.damage_ratio}%</p>
+                                        <p class="text-xl font-black {sev.text}">{resultado.damage_ratio}%</p>
+                                    </div>
+                                    <div class="bg-slate-800/30 rounded-xl p-3 border border-slate-800/60">
+                                        <div class="flex items-center gap-1 mb-2">
+                                            <TrendingUp size={11} class="text-slate-600" />
+                                            <p class="text-[8px] uppercase tracking-widest text-slate-600 font-black">Confianza</p>
+                                        </div>
+                                        <p class="text-xl font-black {sev.text}">{resultado.confianza_promedio ?? 0}%</p>
                                     </div>
                                 </div>
 

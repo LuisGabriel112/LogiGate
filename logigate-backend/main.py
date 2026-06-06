@@ -25,7 +25,7 @@ import uuid
 import time
 import json
 from vision_engine import LicensePlateEngine
-from damage_engine import DamageDetectionEngine
+from damage_engine import DamageDetectionEngine, ImageValidationError
 from security_utils import encrypt_data, decrypt_data
 
 UPLOAD_DIR = os.path.join("static", "plates")
@@ -71,11 +71,16 @@ async def lifespan(app: FastAPI):
 
     print("--- Inicializando Motor de Detección de Daños ---")
     try:
-        from huggingface_hub import hf_hub_download
-        dmg_path = hf_hub_download(
-            repo_id="scythe410/vehicle-damage-detection-yolo",
-            filename="v2.pt"
-        )
+        custom = os.path.join(os.path.dirname(__file__), "damage_model_custom.pt")
+        if os.path.exists(custom):
+            print(f"--- Usando modelo custom entrenado: {custom} ---")
+            dmg_path = custom
+        else:
+            from huggingface_hub import hf_hub_download
+            dmg_path = hf_hub_download(
+                repo_id="harpreetsahota/car-dd-segmentation-yolov11",
+                filename="best.pt"
+            )
         damage_engine_ia = DamageDetectionEngine(model_path=dmg_path)
     except Exception as e:
         print(f"Error al cargar modelo de daños: {e}")
@@ -323,11 +328,23 @@ async def damage_scan(
         if img is None:
             raise Exception("No se pudo leer la imagen.")
 
-        analysis = damage_engine_ia.analyze(img)
+        try:
+            damage_engine_ia.validate(img)
+            img = damage_engine_ia.preprocess(img)
+        except ImageValidationError as e:
+            raise HTTPException(status_code=422, detail=e.message)
+
+        analysis  = damage_engine_ia.analyze(img)
         annotated = damage_engine_ia.annotate(img, analysis)
 
         ann_filename = f"ann_{filename}"
         cv2.imwrite(os.path.join(DAMAGE_DIR, ann_filename), annotated)
+
+        # Strip mask_contour antes de guardar/retornar (solo se usa internamente)
+        detecciones_clean = [
+            {k: v for k, v in d.items() if k != "mask_contour"}
+            for d in analysis["detecciones"]
+        ]
 
         registro = RegistroDanos(
             placa=encrypt_data(placa) if placa else "",
@@ -335,21 +352,22 @@ async def damage_scan(
             danos_detectados=analysis["danos_detectados"],
             severidad=analysis["severidad"],
             damage_ratio=analysis["damage_ratio"],
-            detecciones_json=json.dumps(analysis["detecciones"]),
+            detecciones_json=json.dumps(detecciones_clean),
         )
         db.add(registro)
         db.commit()
         db.refresh(registro)
 
         return {
-            "scan_id": scan_id,
-            "registro_id": registro.id,
-            "placa": placa,
-            "danos_detectados": analysis["danos_detectados"],
-            "severidad": analysis["severidad"],
-            "damage_ratio": analysis["damage_ratio"],
-            "detecciones": analysis["detecciones"],
-            "image_url": f"/static/damages/{ann_filename}?v={time.time()}",
+            "scan_id":           scan_id,
+            "registro_id":       registro.id,
+            "placa":             placa,
+            "danos_detectados":  analysis["danos_detectados"],
+            "severidad":         analysis["severidad"],
+            "damage_ratio":      analysis["damage_ratio"],
+            "confianza_promedio": analysis.get("confianza_promedio", 0.0),
+            "detecciones":       detecciones_clean,
+            "image_url":         f"/static/damages/{ann_filename}?v={time.time()}",
         }
     except HTTPException:
         raise

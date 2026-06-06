@@ -5,3 +5,6 @@ logigate-front/.svelte-kit/
 venv/
 .env
 *.pt
+logigate-backend/damage_dataset/
+runs/
+logigate-backend/static/damages/
