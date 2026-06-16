@@ -29,6 +29,16 @@ from damage_engine import DamageDetectionEngine, ImageValidationError
 from vlm_engine import VLMEngine
 from security_utils import encrypt_data, decrypt_data
 
+from fastapi import FastAPI
+from database import init_db  # Importas tu función
+
+app = FastAPI()
+
+# Esto obliga a SQLAlchemy a conectarse a Supabase y crear todo al arrancar
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
 UPLOAD_DIR = os.path.join("static", "plates")
 DAMAGE_DIR = os.path.join("static", "damages")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
