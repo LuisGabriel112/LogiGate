@@ -26,6 +26,7 @@ import time
 import json
 from vision_engine import LicensePlateEngine
 from damage_engine import DamageDetectionEngine, ImageValidationError
+from vlm_engine import VLMEngine
 from security_utils import encrypt_data, decrypt_data
 
 UPLOAD_DIR = os.path.join("static", "plates")
@@ -44,6 +45,7 @@ class ScanResponse(BaseModel):
 
 engine_ia = None
 damage_engine_ia = None
+vlm_engine_ia = None
 
 def validar_formato_mexicano(texto):
     texto = texto.upper().replace(" ", "").replace("-", "")
@@ -85,6 +87,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Error al cargar modelo de daños: {e}")
         damage_engine_ia = None
+
+    print("--- Iniciando VLM (Qwen2.5-VL-3B) en segundo plano ---")
+    def _load_vlm():
+        global vlm_engine_ia
+        try:
+            vlm_engine_ia = VLMEngine()
+            vlm_engine_ia.load()
+        except Exception as e:
+            print(f"Error al cargar VLM: {e}")
+
+    import threading
+    threading.Thread(target=_load_vlm, daemon=True).start()
 
     yield
     del engine_ia
@@ -293,7 +307,7 @@ async def get_history(db: Session = Depends(get_db)):
         return [
             {
                 "id_acceso": r[0],
-                "placa": str(r[1]),
+                "placa": decrypt_data(r[1]) if r[1] else "",
                 "fecha": r[2].strftime("%Y-%m-%d %H:%M:%S") if r[2] else None,
                 "foto_url": f"/static/plates/{r[3]}" if r[3] else None,
                 "marca": str(r[4] or "Desconocido"),
@@ -346,6 +360,10 @@ async def damage_scan(
             for d in analysis["detecciones"]
         ]
 
+        interpretacion = ""
+        if vlm_engine_ia and vlm_engine_ia.ready:
+            interpretacion = vlm_engine_ia.interpret(img, detecciones_clean)
+
         registro = RegistroDanos(
             placa=encrypt_data(placa) if placa else "",
             imagen_url=f"/static/damages/{ann_filename}",
@@ -353,21 +371,23 @@ async def damage_scan(
             severidad=analysis["severidad"],
             damage_ratio=analysis["damage_ratio"],
             detecciones_json=json.dumps(detecciones_clean),
+            interpretacion=interpretacion,
         )
         db.add(registro)
         db.commit()
         db.refresh(registro)
 
         return {
-            "scan_id":           scan_id,
-            "registro_id":       registro.id,
-            "placa":             placa,
-            "danos_detectados":  analysis["danos_detectados"],
-            "severidad":         analysis["severidad"],
-            "damage_ratio":      analysis["damage_ratio"],
+            "scan_id":            scan_id,
+            "registro_id":        registro.id,
+            "placa":              placa,
+            "danos_detectados":   analysis["danos_detectados"],
+            "severidad":          analysis["severidad"],
+            "damage_ratio":       analysis["damage_ratio"],
             "confianza_promedio": analysis.get("confianza_promedio", 0.0),
-            "detecciones":       detecciones_clean,
-            "image_url":         f"/static/damages/{ann_filename}?v={time.time()}",
+            "detecciones":        detecciones_clean,
+            "image_url":          f"/static/damages/{ann_filename}?v={time.time()}",
+            "interpretacion":     interpretacion,
         }
     except HTTPException:
         raise
@@ -375,6 +395,157 @@ async def damage_scan(
         if 'db' in locals():
             db.rollback()
         print(f"ERROR EN DAMAGE-SCAN: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Inspección combinada (placa + daños en una sola captura) ──────────────────
+
+@app.post("/api/v1/inspect")
+async def inspect(image: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Una foto → reconocimiento de placa + detección de daños + interpretación VLM.
+    Guarda un Registro de acceso con danos_visibles poblado y un RegistroDanos ligado
+    por registro_id. Devuelve veredicto combinado."""
+    try:
+        scan_id = str(uuid.uuid4())
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Sanear nombre: espacios/acentos/símbolos rompen la URL de la imagen en el front
+        safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", image.filename or "captura.jpg")
+        base_name = f"{timestamp}_{safe_name}"
+        plate_path = os.path.join(UPLOAD_DIR, base_name)
+
+        with open(plate_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+
+        img = cv2.imread(plate_path)
+        if img is None:
+            raise Exception("No se pudo leer la imagen.")
+
+        # ── 1. PLACA ──────────────────────────────────────────────────────────
+        detections = engine_ia.process_image(img)
+        detected_plate = "NO_DETECTADA"
+        max_conf = 0.0
+        if detections:
+            best = max(detections, key=lambda x: x["confidence"])
+            detected_plate = best["plate"]
+            max_conf = best["confidence"]
+
+        display_plate = detected_plate
+        if len(detected_plate) >= 6 and "-" not in detected_plate:
+            display_plate = f"{detected_plate[:3]}-{detected_plate[3:]}"
+
+        es_valida = detected_plate != "NO_DETECTADA"
+        es_mexicana = validar_formato_mexicano(detected_plate) if es_valida else False
+
+        # ── 2. DAÑOS (resiliente: si falla, la placa igual responde) ──────────
+        damage = {
+            "disponible": False,
+            "danos_detectados": 0,
+            "severidad": "sin_danos",
+            "damage_ratio": 0.0,
+            "confianza_promedio": 0.0,
+            "detecciones": [],
+            "interpretacion": "",
+            "image_url": "",
+            "error": "",
+        }
+        if damage_engine_ia is not None:
+            try:
+                dmg_img = damage_engine_ia.preprocess(img)
+                analysis = damage_engine_ia.analyze(dmg_img)
+                annotated = damage_engine_ia.annotate(dmg_img, analysis)
+                # Forzar .jpg: cv2.imwrite falla con extensiones no estándar (.jfif, etc.)
+                ann_filename = f"ann_{os.path.splitext(base_name)[0]}.jpg"
+                cv2.imwrite(os.path.join(DAMAGE_DIR, ann_filename), annotated)
+
+                detecciones_clean = [
+                    {k: v for k, v in d.items() if k != "mask_contour"}
+                    for d in analysis["detecciones"]
+                ]
+
+                interpretacion = ""
+                if vlm_engine_ia and vlm_engine_ia.ready and analysis["danos_detectados"] > 0:
+                    interpretacion = vlm_engine_ia.interpret(dmg_img, detecciones_clean)
+
+                damage.update({
+                    "disponible": True,
+                    "danos_detectados": analysis["danos_detectados"],
+                    "severidad": analysis["severidad"],
+                    "damage_ratio": analysis["damage_ratio"],
+                    "confianza_promedio": analysis.get("confianza_promedio", 0.0),
+                    "detecciones": detecciones_clean,
+                    "interpretacion": interpretacion,
+                    "image_url": f"/static/damages/{ann_filename}",
+                })
+            except ImageValidationError as e:
+                damage["error"] = e.message
+            except Exception as e:
+                print(f"INSPECT daños error: {e}")
+                damage["error"] = str(e)
+
+        # ── 3. VEREDICTO COMBINADO ────────────────────────────────────────────
+        danos_graves = damage["severidad"] == "grave"
+        if not es_valida:
+            estado = "denegado"
+            status_msg = "Rechazada: Placa no válida o no visible"
+        elif danos_graves:
+            estado = "entrada"
+            status_msg = f"Acceso con alerta · daño grave detectado · {display_plate}"
+        elif es_mexicana:
+            estado = "entrada"
+            status_msg = f"Acceso Concedido: {display_plate}"
+        else:
+            estado = "entrada"
+            status_msg = f"Revisión Manual: {display_plate}"
+
+        # ── 4. PERSISTIR (registro de acceso + daños ligado) ──────────────────
+        registro = Registro(
+            placa=encrypt_data(display_plate),
+            estado=estado,
+            confianza=round(max_conf * 100),
+            danos_visibles=1 if damage["danos_detectados"] > 0 else 0,
+            autorizado_por="IA-LogiGate",
+        )
+        db.add(registro)
+        db.commit()
+        db.refresh(registro)
+
+        registro_danos_id = None
+        if damage["disponible"]:
+            rd = RegistroDanos(
+                placa=encrypt_data(display_plate) if es_valida else "",
+                registro_id=registro.id,
+                imagen_url=damage["image_url"],
+                danos_detectados=damage["danos_detectados"],
+                severidad=damage["severidad"],
+                damage_ratio=damage["damage_ratio"],
+                detecciones_json=json.dumps(damage["detecciones"]),
+                interpretacion=damage["interpretacion"],
+            )
+            db.add(rd)
+            db.commit()
+            db.refresh(rd)
+            registro_danos_id = rd.id
+
+        # cache-bust para el front
+        if damage["image_url"]:
+            damage["image_url"] = f"{damage['image_url']}?v={time.time()}"
+
+        return {
+            "scan_id":          scan_id,
+            "registro_id":      registro.id,
+            "registro_danos_id": registro_danos_id,
+            "plate":            display_plate,
+            "confidence":       float(max_conf),
+            "estado":           estado,
+            "status":           status_msg,
+            "image_url":        f"/static/plates/{base_name}?v={time.time()}",
+            "damage":           damage,
+        }
+
+    except Exception as e:
+        if 'db' in locals():
+            db.rollback()
+        print(f"ERROR EN INSPECT: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -395,6 +566,7 @@ def get_damage_history(limit: int = Query(default=50, le=200), db: Session = Dep
             "severidad": r.severidad,
             "damage_ratio": r.damage_ratio,
             "detecciones": json.loads(r.detecciones_json) if r.detecciones_json else [],
+            "interpretacion": r.interpretacion or "",
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
         for r in rows

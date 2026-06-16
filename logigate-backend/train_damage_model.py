@@ -16,14 +16,13 @@ DATASET_DIR      = "./damage_dataset"
 OUTPUT_DIR       = "./damage_model_trained"
 
 # Hiperparámetros de entrenamiento
-EPOCHS     = 50
-IMGSZ      = 640
-BATCH      = 8        # bajar a 4 si hay poca RAM
-PATIENCE   = 15       # early stopping si no mejora en N epochs
-DEVICE     = "cpu"    # cambiar a 0 si tienes GPU NVIDIA
+EPOCHS     = 100
+IMGSZ      = 512
+BATCH      = 4
+PATIENCE   = 20
+DEVICE     = 0
 
-# Modelo base (el que ya usamos, lo fine-tuneamos)
-BASE_MODEL = "yolo11x-seg.pt"
+BASE_MODEL = "damage_model_custom.pt"  # fine-tune desde modelo ya entrenado
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -97,7 +96,7 @@ def train(yaml_path: str):
         patience=PATIENCE,
         device=DEVICE,
         project=OUTPUT_DIR,
-        name="damage_v1",
+        name="damage_v2",
         exist_ok=True,
         # Augmentaciones para mejor generalización
         hsv_h=0.015,
@@ -116,7 +115,7 @@ def train(yaml_path: str):
 
 def copy_best_model():
     print("\n[3/3] Copiando mejor modelo...")
-    candidates = glob.glob(f"{OUTPUT_DIR}/damage_v1/weights/best.pt")
+    candidates = glob.glob(f"{OUTPUT_DIR}/damage_v2/weights/best.pt")
     if not candidates:
         print("    ERROR: No se encontró best.pt")
         return None

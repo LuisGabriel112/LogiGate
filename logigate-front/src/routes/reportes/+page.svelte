@@ -84,6 +84,7 @@
     });
 
     const maxFlujo = $derived(Math.max(...flujoDias().map(d => d.count), 1));
+    const totalFlujo = $derived(flujoDias().reduce((sum, d) => sum + d.count, 0));
 
     // ── Filtrado y paginación ─────────────────────────────────
     const filtrados = $derived(
@@ -189,20 +190,27 @@
                 <p class="text-[10px] text-slate-500 mt-0.5">Últimos 7 días</p>
             </div>
         </div>
-        <div class="flex items-end gap-3 h-40">
-            {#each flujoDias() as dia}
-                <div class="flex-1 flex flex-col items-center gap-2">
-                    <span class="text-[10px] font-bold text-slate-400">{dia.count > 0 ? dia.count : ''}</span>
-                    <div class="w-full rounded-t-md bg-slate-800 relative overflow-hidden" style="height: 96px;">
-                        <div
-                            class="absolute bottom-0 inset-x-0 bg-orange-500 rounded-t-md transition-all duration-700"
-                            style="height: {dia.count > 0 ? Math.round((dia.count / maxFlujo) * 96) : 2}px;"
-                        ></div>
+        {#if totalFlujo === 0}
+            <div class="h-40 flex flex-col items-center justify-center gap-2 text-slate-700">
+                <Calendar size={28} />
+                <p class="text-xs">Sin movimientos en este periodo</p>
+            </div>
+        {:else}
+            <div class="flex items-end gap-3 h-40">
+                {#each flujoDias() as dia}
+                    <div class="flex-1 flex flex-col items-center gap-2">
+                        <span class="text-[10px] font-bold text-slate-400">{dia.count > 0 ? dia.count : ''}</span>
+                        <div class="w-full rounded-t-md bg-slate-800 relative overflow-hidden" style="height: 96px;">
+                            <div
+                                class="absolute bottom-0 inset-x-0 bg-orange-500 rounded-t-md transition-all duration-700"
+                                style="height: {dia.count > 0 ? Math.round((dia.count / maxFlujo) * 96) : 2}px;"
+                            ></div>
+                        </div>
+                        <span class="text-[9px] text-slate-500 capitalize text-center">{dia.label}</span>
                     </div>
-                    <span class="text-[9px] text-slate-500 capitalize text-center">{dia.label}</span>
-                </div>
-            {/each}
-        </div>
+                {/each}
+            </div>
+        {/if}
     </div>
 
     <!-- Tabla de operaciones -->

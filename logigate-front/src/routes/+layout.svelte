@@ -18,7 +18,6 @@
         ChevronRight,
         CheckCheck,
         ShieldAlert,
-        AlertTriangle,
         LogIn,
         LogOut as LogOutIcon,
         X,
@@ -33,8 +32,7 @@
 
     const menuItems = [
         { name: 'Panel de Control',   short: 'Panel',    icon: LayoutDashboard, path: '/panel-control' },
-        { name: 'Entradas / Salidas', short: 'Scanner',  icon: ArrowLeftRight,  path: '/scanner'       },
-        { name: 'Detección de Daños', short: 'Daños',    icon: AlertTriangle,   path: '/danos'         },
+        { name: 'Inspección de Acceso', short: 'Inspección', icon: ArrowLeftRight, path: '/scanner' },
         { name: 'Mapa de Patio',      short: 'Mapa',     icon: Map,             path: '/mapa'          },
         { name: 'Reportes',           short: 'Reportes', icon: FileText,        path: '/reportes'      },
     ];
@@ -175,7 +173,11 @@
                         <p class="text-xs font-bold text-slate-200 truncate">{settings.nombre}</p>
                         <p class="text-[10px] text-slate-600">{settings.rol}</p>
                     </div>
-                    <button class="text-slate-700 hover:text-red-400 transition-colors p-1 rounded-lg hover:bg-red-500/10">
+                    <button
+                        onclick={() => window.location.href = '/'}
+                        class="text-slate-700 hover:text-red-400 transition-colors p-1 rounded-lg hover:bg-red-500/10"
+                        title="Cerrar sesión"
+                    >
                         <LogOut size={15} />
                     </button>
                 </div>

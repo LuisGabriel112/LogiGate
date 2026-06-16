@@ -78,6 +78,7 @@
     });
 
     const maxFlujo = $derived(Math.max(...flujo.map(d => d.count), 1));
+    const totalFlujo = $derived(flujo.reduce((sum, d) => sum + d.count, 0));
 
     const tendencia = $derived(() => {
         if (flujo.length < 2) return null;
@@ -218,10 +219,10 @@
                 <div class="h-44 flex items-center justify-center">
                     <div class="w-7 h-7 border-2 border-slate-700 border-t-orange-500 rounded-full animate-spin"></div>
                 </div>
-            {:else if flujo.length === 0}
+            {:else if flujo.length === 0 || totalFlujo === 0}
                 <div class="h-44 flex flex-col items-center justify-center gap-2 text-slate-700">
                     <Activity size={28} />
-                    <p class="text-xs">Sin movimientos registrados</p>
+                    <p class="text-xs">Sin movimientos en este periodo</p>
                 </div>
             {:else}
                 <div class="flex items-end gap-2 h-44">

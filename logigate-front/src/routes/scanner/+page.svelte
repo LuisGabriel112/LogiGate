@@ -1,6 +1,7 @@
 <script>
     import { onMount } from 'svelte';
-    import { Scan, CheckCircle, XCircle, RotateCcw, Upload, ImagePlus, Shield, ShieldOff, History, Edit2, Check, Ban } from 'lucide-svelte';
+    import { fade } from 'svelte/transition';
+    import { Scan, CheckCircle, XCircle, RotateCcw, Upload, ImagePlus, Shield, ShieldOff, History, Edit2, Check, Ban, Clock, AlertTriangle, Layers, Percent, TrendingUp, Sparkles } from 'lucide-svelte';
     import { addToast } from '$lib/toast.svelte.js';
     import { settings } from '$lib/settings.svelte.js';
 
@@ -18,6 +19,9 @@
     let scanLinePos = $state(0);
     let scanInterval = null;
     let historial = $state([]);
+    let historialDB = $state([]);
+    let cargandoHist = $state(false);
+    let activeTab = $state('scan');
     let overrideEstado = $state(null); // null | 'entrada' | 'denegado'
     let editandoPlaca  = $state(false);
     let placaEditada   = $state('');
@@ -67,10 +71,20 @@
             localStorage.setItem(HIST_KEY, JSON.stringify(historial));
     }
 
+    async function fetchHistorial() {
+        cargandoHist = true;
+        try {
+            const r = await fetch(`${API}/api/v1/registros?limit=50`);
+            if (r.ok) historialDB = await r.json();
+        } catch (_) {}
+        cargandoHist = false;
+    }
+
     onMount(async () => {
         if (typeof localStorage !== 'undefined') {
             try { historial = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch (_) {}
         }
+        fetchHistorial();
         try {
             stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         } catch (_) {
@@ -114,10 +128,19 @@
     };
 
     async function postScan(fd) {
-        const r = await fetch(`${API}/api/v1/scan`, { method: 'POST', body: fd });
+        const r = await fetch(`${API}/api/v1/inspect`, { method: 'POST', body: fd });
         if (!r.ok) throw new Error(`Error ${r.status}`);
         return r.json();
     }
+
+    const SEVERIDAD = {
+        sin_danos: { label: 'Sin Daños',     text: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/20',  dot: 'bg-green-400'  },
+        leve:      { label: 'Daño Leve',     text: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/20', dot: 'bg-yellow-400' },
+        moderado:  { label: 'Daño Moderado', text: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20', dot: 'bg-orange-400' },
+        grave:     { label: 'Daño Grave',    text: 'text-red-400',    bg: 'bg-red-500/10',    border: 'border-red-500/20',    dot: 'bg-red-400'    },
+    };
+    const dmg = $derived(resultado?.damage ?? null);
+    const sev = $derived(dmg?.disponible ? (SEVERIDAD[dmg.severidad] ?? SEVERIDAD.leve) : null);
 
     const sendToBackend = async (base64) => {
         try {
@@ -129,7 +152,11 @@
             const auth = !resultado.status?.toLowerCase().includes('denegad') && !resultado.status?.toLowerCase().includes('error');
             playBeep(auth);
             addToast(auth ? `Acceso concedido: ${resultado.plate}` : `Acceso denegado: ${resultado.plate}`, auth ? 'success' : 'error');
+            const dsev = resultado.damage?.severidad;
+            if (dsev === 'grave') addToast('⚠ Daño grave detectado', 'error');
+            else if (dsev === 'moderado') addToast('Daño moderado detectado', 'info');
             saveToHistory(resultado);
+            fetchHistorial();
         } catch (_) {
             error = 'No se pudo conectar con el servidor de IA.';
             addToast('Error al conectar con el servidor', 'error');
@@ -146,7 +173,11 @@
             const auth = !resultado.status?.toLowerCase().includes('denegad') && !resultado.status?.toLowerCase().includes('error');
             playBeep(auth);
             addToast(auth ? `Acceso concedido: ${resultado.plate}` : `Acceso denegado: ${resultado.plate}`, auth ? 'success' : 'error');
+            const dsev = resultado.damage?.severidad;
+            if (dsev === 'grave') addToast('⚠ Daño grave detectado', 'error');
+            else if (dsev === 'moderado') addToast('Daño moderado detectado', 'info');
             saveToHistory(resultado);
+            fetchHistorial();
         } catch (_) {
             error = 'No se pudo conectar con el servidor de IA.';
             addToast('Error al conectar con el servidor', 'error');
@@ -195,9 +226,37 @@
         editandoPlaca = false;
         addToast(`Placa corregida: ${resultado.plate}`, 'info');
     }
+
+    const fmtRelativo = (iso) => {
+        if (!iso) return '';
+        const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+        if (diff < 60) return 'Hace un momento';
+        if (diff < 3600) return `Hace ${Math.floor(diff / 60)} min`;
+        return `Hace ${Math.floor(diff / 3600)} h`;
+    };
 </script>
 
-<div class="h-full bg-[#080A0E] text-white p-4 md:p-6 flex flex-col items-center overflow-y-auto custom-scrollbar">
+<div class="h-full bg-[#080A0E] text-white flex flex-col overflow-hidden">
+
+    <!-- Tabs -->
+    <div class="flex border-b border-slate-800/60 bg-[#0E1015] px-4 pt-4 gap-1 shrink-0">
+        {#each [['scan','Escanear'], ['historial','Historial']] as [tab, label]}
+            <button
+                onclick={() => activeTab = tab}
+                class="px-4 py-2.5 text-xs font-black uppercase tracking-widest rounded-t-lg border-b-2 transition-all
+                    {activeTab === tab
+                        ? 'border-orange-500 text-orange-400 bg-orange-500/5'
+                        : 'border-transparent text-slate-600 hover:text-slate-300'}"
+            >
+                {label}
+            </button>
+        {/each}
+    </div>
+
+    <div class="flex-1 overflow-y-auto custom-scrollbar">
+
+    {#if activeTab === 'scan'}
+    <div class="p-4 md:p-6 flex flex-col items-center" in:fade={{ duration: 100 }}>
 
     <!-- Selector de modo -->
     {#if !resultado && !isScanning}
@@ -278,7 +337,8 @@
                 <div class="w-12 h-12 border-2 border-slate-700 border-t-orange-500 rounded-full animate-spin"></div>
                 <div class="text-center">
                     <p class="text-sm font-black text-white tracking-widest">ANALIZANDO</p>
-                    <p class="text-[10px] text-orange-400 mt-1">Motor IA · YOLOv11 + EasyOCR</p>
+                    <p class="text-[10px] text-orange-400 mt-1">Placa + Daños · YOLOv11 + EasyOCR + Qwen-VL</p>
+                    <p class="text-[9px] text-slate-500 mt-0.5">Inspección completa · puede tardar ~15s</p>
                 </div>
                 <div class="w-48 bg-slate-800 h-1 rounded-full overflow-hidden mt-2">
                     <div class="h-full bg-orange-500 rounded-full animate-[scan_1.5s_ease-in-out_infinite]"></div>
@@ -379,6 +439,84 @@
                             <p class="text-xs font-bold {esAutorizado ? 'text-green-400' : 'text-red-400'} leading-snug">{resultado.status}</p>
                         </div>
                     </div>
+                    <!-- ── Resultado de daños (inspección combinada) ── -->
+                    {#if dmg}
+                        <div class="border-t border-slate-800/60 pt-4 space-y-3">
+                            <div class="flex items-center gap-2">
+                                <AlertTriangle size={12} class="text-slate-600" />
+                                <p class="text-[10px] font-black uppercase tracking-widest text-slate-600">Inspección de Daños</p>
+                            </div>
+
+                            {#if !dmg.disponible}
+                                <div class="bg-slate-800/30 border border-slate-800/60 rounded-xl p-3">
+                                    <p class="text-xs text-slate-500">
+                                        {dmg.error ? `No evaluado: ${dmg.error}` : 'Motor de daños no disponible.'}
+                                    </p>
+                                </div>
+                            {:else if sev}
+                                {#if dmg.image_url}
+                                    <div class="relative rounded-xl overflow-hidden border {sev.border}">
+                                        <img src="{API}{dmg.image_url}" alt="Daños detectados" class="w-full object-cover max-h-44" />
+                                        <span class="absolute top-2 left-2 text-[10px] font-black px-2.5 py-1 rounded-full border {sev.bg} {sev.text} {sev.border} backdrop-blur-sm">
+                                            {sev.label.toUpperCase()}
+                                        </span>
+                                    </div>
+                                {/if}
+
+                                <div class="grid grid-cols-3 gap-2">
+                                    <div class="bg-slate-800/30 rounded-xl p-3 border border-slate-800/60">
+                                        <div class="flex items-center gap-1 mb-2">
+                                            <Layers size={11} class="text-slate-600" />
+                                            <p class="text-[8px] uppercase tracking-widest text-slate-600 font-black">Daños</p>
+                                        </div>
+                                        <p class="text-lg font-black {sev.text}">{dmg.danos_detectados}</p>
+                                    </div>
+                                    <div class="bg-slate-800/30 rounded-xl p-3 border border-slate-800/60">
+                                        <div class="flex items-center gap-1 mb-2">
+                                            <Percent size={11} class="text-slate-600" />
+                                            <p class="text-[8px] uppercase tracking-widest text-slate-600 font-black">Área</p>
+                                        </div>
+                                        <p class="text-lg font-black {sev.text}">{dmg.damage_ratio}%</p>
+                                    </div>
+                                    <div class="bg-slate-800/30 rounded-xl p-3 border border-slate-800/60">
+                                        <div class="flex items-center gap-1 mb-2">
+                                            <TrendingUp size={11} class="text-slate-600" />
+                                            <p class="text-[8px] uppercase tracking-widest text-slate-600 font-black">Conf.</p>
+                                        </div>
+                                        <p class="text-lg font-black {sev.text}">{dmg.confianza_promedio ?? 0}%</p>
+                                    </div>
+                                </div>
+
+                                {#if dmg.detecciones?.length > 0}
+                                    <div class="space-y-1.5">
+                                        {#each dmg.detecciones as det}
+                                            <div class="flex items-center gap-3 bg-slate-800/30 rounded-lg px-3 py-2 border border-slate-800/50">
+                                                <div class="w-1.5 h-1.5 rounded-full {sev.dot} shrink-0"></div>
+                                                <span class="text-xs font-bold text-slate-300 capitalize flex-grow">{det.tipo}</span>
+                                                <div class="flex items-center gap-2">
+                                                    <div class="w-16 bg-slate-700/50 h-1 rounded-full overflow-hidden">
+                                                        <div class="h-full {sev.dot} rounded-full" style="width:{Math.round(det.confianza*100)}%"></div>
+                                                    </div>
+                                                    <span class="text-[10px] text-slate-500 font-bold w-8 text-right">{Math.round(det.confianza*100)}%</span>
+                                                </div>
+                                            </div>
+                                        {/each}
+                                    </div>
+                                {/if}
+
+                                {#if dmg.interpretacion}
+                                    <div class="bg-purple-500/5 border border-purple-500/20 rounded-xl p-3">
+                                        <div class="flex items-center gap-1.5 mb-2">
+                                            <Sparkles size={11} class="text-purple-400" />
+                                            <p class="text-[9px] font-black uppercase tracking-widest text-purple-400/80">Análisis IA · Qwen-VL</p>
+                                        </div>
+                                        <p class="text-xs text-slate-300 leading-relaxed italic">"{dmg.interpretacion}"</p>
+                                    </div>
+                                {/if}
+                            {/if}
+                        </div>
+                    {/if}
+
                     <!-- Acciones de override -->
                     <div class="grid grid-cols-2 gap-2">
                         {#if !esAutorizado}
@@ -432,29 +570,72 @@
         {/if}
 
     </div>
+    </div>
+    {/if}
 
-    <!-- Historial últimas 5 -->
-    {#if historial.length > 0}
-        <div class="w-full max-w-md mt-6">
-            <div class="flex items-center gap-2 mb-3">
-                <History size={14} class="text-slate-600" />
-                <p class="text-[10px] font-black uppercase tracking-widest text-slate-600">Últimos escaneos</p>
+    {#if activeTab === 'historial'}
+    <div class="p-4 md:p-6" in:fade={{ duration: 100 }}>
+        <div class="flex items-center gap-2 mb-4">
+            <History size={14} class="text-slate-600" />
+            <p class="text-[10px] font-black uppercase tracking-widest text-slate-600">Accesos recientes</p>
+        </div>
+
+        {#if cargandoHist}
+            <div class="flex justify-center py-20">
+                <div class="w-8 h-8 border-2 border-slate-700 border-t-orange-500 rounded-full animate-spin"></div>
             </div>
-            <div class="space-y-2">
-                {#each historial as h}
-                    <div class="flex items-center gap-3 bg-[#0E1015] border border-slate-800/50 rounded-xl px-3.5 py-2.5">
-                        <span class="font-black text-white tracking-wider text-xs bg-slate-800 px-2 py-0.5 rounded">{h.plate}</span>
-                        <span class="text-[10px] font-black px-2 py-0.5 rounded-full border
-                            {h.esAutorizado ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}">
-                            {h.esAutorizado ? 'OK' : 'DENY'}
-                        </span>
-                        <span class="text-[10px] text-slate-600 ml-auto">{h.hora} · {h.confPct}%</span>
+        {:else if historialDB.length === 0}
+            <div class="flex flex-col items-center justify-center gap-3 py-20 text-slate-700">
+                <History size={32} />
+                <p class="text-sm">Sin registros aún</p>
+            </div>
+        {:else}
+            <div class="space-y-3">
+                {#each historialDB as r}
+                    {@const auth = r.estado === 'entrada'}
+                    {@const denegado = r.estado === 'denegado'}
+                    <div class="bg-[#0E1015] border border-slate-800/60 rounded-2xl overflow-hidden hover:border-slate-700/60 transition-colors">
+                        <div class="flex gap-3 p-3">
+                            <!-- Ícono estado -->
+                            <div class="w-16 h-14 rounded-xl shrink-0 flex items-center justify-center
+                                {auth ? 'bg-green-500/10' : denegado ? 'bg-red-500/10' : 'bg-slate-800'}">
+                                {#if auth}
+                                    <Shield size={22} class="text-green-400" />
+                                {:else if denegado}
+                                    <ShieldOff size={22} class="text-red-400" />
+                                {:else}
+                                    <Shield size={22} class="text-slate-500" />
+                                {/if}
+                            </div>
+                            <div class="flex-grow min-w-0">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="text-[10px] font-black px-2 py-0.5 rounded-full border
+                                        {auth ? 'bg-green-500/10 text-green-400 border-green-500/20' : denegado ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-slate-800 text-slate-400 border-slate-700'}">
+                                        {r.estado?.toUpperCase() ?? '—'}
+                                    </span>
+                                    {#if r.placa}
+                                        <span class="text-[10px] font-bold text-slate-300 tracking-wider bg-slate-800 px-2 py-0.5 rounded">{r.placa}</span>
+                                    {/if}
+                                </div>
+                                <div class="flex items-center gap-3 text-[10px] text-slate-600">
+                                    {#if r.conductor}<span class="truncate">{r.conductor}</span>{/if}
+                                    {#if r.empresa}<span class="truncate text-slate-500">{r.empresa}</span>{/if}
+                                    {#if r.confianza}<span><span class="font-black text-orange-400">{Math.round(r.confianza * 100)}%</span> conf.</span>{/if}
+                                </div>
+                                <div class="flex items-center gap-1.5 mt-1.5">
+                                    <Clock size={10} class="text-slate-700" />
+                                    <span class="text-[10px] text-slate-700">{fmtRelativo(r.created_at)}</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 {/each}
             </div>
-        </div>
+        {/if}
+    </div>
     {/if}
 
+    </div>
 </div>
 
 <style>
