@@ -4,6 +4,10 @@ os.environ['FLAGS_enable_pir_api'] = '0'
 os.environ['FLAGS_enable_mkldnn'] = '0'
 os.environ['FLAGS_on_ednn'] = '0'
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+# PyTorch (EasyOCR) y OpenVINO (daños) corren en el mismo proceso; ambos por
+# defecto acaparan todos los núcleos del CPU y se pisan entre sí, degradando
+# la inferencia entre requests. Se acota antes de importar esas librerías.
+os.environ.setdefault('OMP_NUM_THREADS', '4')
 # ----------------------------------------------
 
 from fastapi import FastAPI, File, Form, UploadFile, Depends, HTTPException, Query
@@ -27,6 +31,7 @@ import json
 from vision_engine import LicensePlateEngine
 from damage_engine import DamageDetectionEngine, ImageValidationError
 from vlm_engine import VLMEngine
+from vlm_flag import vlm_enabled
 from security_utils import encrypt_data, decrypt_data
 
 from fastapi import FastAPI
@@ -98,7 +103,6 @@ async def lifespan(app: FastAPI):
         print(f"Error al cargar modelo de daños: {e}")
         damage_engine_ia = None
 
-    print("--- Iniciando VLM (Qwen2.5-VL-3B) en segundo plano ---")
     def _load_vlm():
         global vlm_engine_ia
         try:
@@ -107,8 +111,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Error al cargar VLM: {e}")
 
-    import threading
-    threading.Thread(target=_load_vlm, daemon=True).start()
+    if vlm_enabled():
+        print("--- Iniciando VLM (Qwen2.5-VL-3B) en segundo plano ---")
+        import threading
+        threading.Thread(target=_load_vlm, daemon=True).start()
+    else:
+        print("--- VLM_ENABLED=false: motor VLM no se carga ---")
 
     yield
     del engine_ia

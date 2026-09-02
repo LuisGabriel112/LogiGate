@@ -96,5 +96,8 @@
       "Bash(grep -v \"^$\")",
       "Bash(PYTHONIOENCODING=utf-8 python *)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
 }

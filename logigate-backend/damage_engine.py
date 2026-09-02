@@ -1,6 +1,10 @@
+import os
 import cv2
 import numpy as np
 from ultralytics import YOLO
+
+DAMAGE_INFER_SIZE = 416
+OPENVINO_SUFFIX = "_openvino_model"
 
 CLASS_NAMES_ES = {
     "car-part-crack":      "grieta en carrocería",
@@ -45,6 +49,14 @@ DARK_THRESHOLD  = 30    # brillo promedio mínimo (0-255)
 CLAHE_THRESHOLD = 80    # por debajo de esto se aplica CLAHE
 
 
+def resolve_damage_model(pt_path: str) -> str:
+    base, _ext = os.path.splitext(pt_path)
+    openvino_dir = f"{base}{OPENVINO_SUFFIX}"
+    if os.path.isdir(openvino_dir):
+        return openvino_dir
+    return pt_path
+
+
 class ImageValidationError(Exception):
     def __init__(self, code: str, message: str):
         self.code = code
@@ -53,16 +65,20 @@ class ImageValidationError(Exception):
 
 
 class DamageDetectionEngine:
-    def __init__(self, model_path: str):
-        print(f"--- Cargando motor de daños: {model_path} ---")
+    def __init__(self, model_path: str, yolo_model=None):
+        self.model = yolo_model if yolo_model is not None else self._load_yolo(model_path)
+        self.class_names = self.model.names if self.model is not None else {}
+
+    def _load_yolo(self, model_path):
+        resolved_path = resolve_damage_model(model_path)
+        print(f"--- Cargando motor de daños: {resolved_path} ---")
         try:
-            self.model = YOLO(model_path)
-            self.class_names = self.model.names
-            print(f"--- Clases detectables: {list(self.class_names.values())} ---")
+            model = YOLO(resolved_path)
+            print(f"--- Clases detectables: {list(model.names.values())} ---")
+            return model
         except Exception as e:
             print(f"Error cargando modelo de daños: {e}")
-            self.model = None
-            self.class_names = {}
+            return None
 
     def validate(self, img: np.ndarray) -> None:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -82,9 +98,9 @@ class DamageDetectionEngine:
             )
 
     def preprocess(self, img: np.ndarray) -> np.ndarray:
-        # Resize al tamaño nativo del modelo (640) sin distorsión
+        # Resize al tamaño de inferencia sin distorsión (más chico = más rápido en CPU)
         h, w = img.shape[:2]
-        scale = 640 / max(h, w)
+        scale = DAMAGE_INFER_SIZE / max(h, w)
         if scale < 1.0:
             img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
@@ -106,7 +122,7 @@ class DamageDetectionEngine:
                 "detecciones": [], "damage_ratio": 0.0, "confianza_promedio": 0.0,
             }
 
-        results = self.model(img, conf=0.35, iou=0.45, verbose=False)
+        results = self.model(img, conf=0.35, iou=0.45, imgsz=DAMAGE_INFER_SIZE, verbose=False)
         img_area = float(img.shape[0] * img.shape[1]) or 1.0
         detecciones = []
 

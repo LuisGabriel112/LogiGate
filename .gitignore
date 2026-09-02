@@ -11,3 +11,4 @@ logigate-backend/static/damages/
 *.log
 logigate-backend/test_x.jpg
 capturas/
+__pycache__/
